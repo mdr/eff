@@ -704,7 +704,68 @@ trait Interpret {
     }
     interpret1((a: A) => a)(recurse)(effects)(m)
   }
+
+  def interpretGeneric[R, U, T[_], A, B](e: Eff[R, A])
+                                  (interpreter: Interpreter[T, R, U, A, B])
+                                  (implicit m: Member.Aux[T, R, U]): Eff[U, B] = {
+
+    def interpretC1[X](c: Arrs[R, X, A]): Arrs[U, X, B] =
+      Arrs.singleton((x: X) => interpretGeneric(c(x))(interpreter))
+
+    def interpretC2[X](c: Arrs[R, X, A], last: Last[R]): Arrs[U, X, B] =
+      Arrs.singleton((x: X) => interpretGeneric(c(x).addLast(last))(interpreter))
+
+    def interpretLast(l: Last[R]): Last[U] = Last.none[U]
+//      l.value match {
+//        case None => Last.none[U]
+//        case Some(l1) =>
+//          l1.value match {
+//            case Pure(u, last) =>
+//              interpretLast(last)
+//
+//            case Impure(NoEffect(a), c, last) =>
+//              interpretLast(c(a).addLast(last))
+//
+//            case Impure(union: Union[_, _], continuation, last) =>
+//              m.project(union) match {
+//                case Right(tu) =>
+//                  Last.eff(interpreter.onLastEffect(tu, interpretC2(continuation, last)))
+//
+//                case Left(u1) =>
+//                  ??? //Last.eff(interpretLast(interpreter.tu, continuation))
+//              }
+//
+//            case ap @ ImpureAp(_, _, _) =>
+//              interpretLast(Last.eff(ap.toMonadic))
+//         }
+//      }
+
+    e match {
+      case Pure(a, last) =>
+        interpreter.onPure(a)
+
+      case Impure(NoEffect(a), c, l) =>
+        interpretGeneric(c(a).addLast(l))(interpreter)
+
+      case Impure(u: Union[_,_], c, l) =>
+        m.project(u) match {
+          case Right(tu)   => interpreter.onEffect(tu, interpretC2(c, l))
+          case Left(other) => Impure(other, interpretC1(c), interpretLast(l))
+        }
+
+      case ap@ImpureAp(unions, c, l) =>
+        interpretGeneric(ap.toMonadic)(interpreter)
+    }
+  }
 }
+
+trait Interpreter[M[_], R, U, A, B] {
+  def onPure(a: A): Eff[U, B]
+  def onEffect[X](x: M[X], continuation: Arrs[U, X, B]): Eff[U, B]
+  def onLastEffect[X](x: M[X], continuation: Arrs[U, X, Unit]): Eff[U, Unit]
+  def onApplicativeEffect[X, T[_] : Traverse](xs: T[M[X]], continuation: Arrs[U, T[X], B]): Eff[U, B]
+}
+
 
 object Interpret extends Interpret
 

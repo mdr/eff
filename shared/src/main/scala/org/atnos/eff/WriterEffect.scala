@@ -43,6 +43,33 @@ trait WriterInterpretation {
   def runWriter[R, U, O, A, B](w: Eff[R, A])(implicit m: Member.Aux[Writer[O, ?], R, U]): Eff[U, (A, List[O])] =
     runWriterFold(w)(ListFold[O])
 
+
+  def runNewWriter[R, U, O, A, B](w: Eff[R, A])(implicit m: Member.Aux[Writer[O, ?], R, U]): Eff[U, (A, List[O])] = {
+    Interpret.interpretGeneric(w)(new Interpreter[Writer[O, ?], R, U, A, (A, List[O])] {
+      def onPure(a: A): Eff[U, (A, List[O])] =
+        Eff.pure((a, Nil))
+
+      def onEffect[X](ox: Writer[O, X], continuation: Arrs[U, X, (A, List[O])]): Eff[U, (A, List[O])] = {
+        val (o, x) = ox.run
+        Impure(NoEffect(x), Arrs.singleton((y: X) => continuation(y)).map { case (a, res) => (a, o +: res) })
+      }
+      def onLastEffect[X](x: Writer[O, X], continuation: Arrs[U, X, Unit]): Eff[U, Unit] =
+        Eff.pure(())
+
+      def onApplicativeEffect[X, T[_] : Traverse](xs: T[Writer[O, X]], continuation: Arrs[U, T[X], (A, List[O])]): Eff[U, (A, List[O])] = {
+        val os = new collection.mutable.ListBuffer[O]
+        val values = xs.map { w: Writer[O, X] =>
+          val (o, x) = w.run
+          os.append(o)
+          x
+        }
+        continuation(values).map { case (a, res) => (a, res ++ os.toList) }
+      }
+
+    })
+  }
+
+
   /**
    * More general fold of runWriter where we can use a fold to accumulate values in a mutable buffer
    */
